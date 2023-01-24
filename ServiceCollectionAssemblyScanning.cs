@@ -1,71 +1,76 @@
+using System;
 using System.Collections.Generic;
 using System.Reflection;
-using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 
-public static class AssemblyLoaderExtensions
+
+namespace WGS.Web.Services
 {
-    public static IEnumerable<Assembly> GetByName(this IEnumerable<Assembly> asmList, string endsWith)
-        => asmList.Where(asm => asm.GetName().Name.EndsWith(endsWith)).ToList();
-
-    public static IEnumerable<Assembly> CollectReferencedAssemblies(this Assembly asm, IEnumerable<string> targetAssemblyNames )
-        => new HashSet<Assembly>(
-            asm.GetReferencedAssemblies()
-                .Where(a => targetAssemblyNames.Contains(a.Name))
-                .SelectMany(
-                    a => Assembly.Load(a).CollectReferencedAssemblies(targetAssemblyNames))
-                .ToList()
-                .Append(new[]{asm})
-        );
-}
-
-public static class ServiceCollectionAssemblyExtensions
-{
-    public static IServiceCollection AddAssemblyTypes(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime, Func<Type, bool> conditions )
+    public static class AssemblyLoaderExtensions
     {
-        var types = assemblies
-             .SelectMany((System.Reflection.Assembly asm) => asm.GetExportedTypes()) // 公開されている全ての型
-             .Where((t) => !t.IsInterface            // インタフェースではない
-                           && !t.IsAbstract          // 抽象型ではない
-                           && conditions(t))         // 与えた条件に合致する
-             .ToList();
+        public static IEnumerable<Assembly> GetByName(this IEnumerable<Assembly> asmList, string endsWith)
+            => asmList.Where(asm => asm.GetName().Name.EndsWith(endsWith)).ToList();
 
-        foreach (Type type in types)
+        public static IEnumerable<Assembly> CollectReferencedAssemblies(this Assembly asm, IEnumerable<string> targetAssemblyNames)
+            => new HashSet<Assembly>(
+                asm.GetReferencedAssemblies()
+                    .Where(a => targetAssemblyNames.Contains(a.Name))
+                    .SelectMany(
+                        a => Assembly.Load(a).CollectReferencedAssemblies(targetAssemblyNames))
+                    .ToList()
+                    .Concat(new[] { asm })
+            );
+    }
+
+    public static class ServiceCollectionAssemblyExtensions
+    {
+        public static IServiceCollection AddAssemblyTypes(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime, Func<Type, bool> conditions)
         {
-            // 対象のクラスが実装している全てのインタフェースに対してこの型をサービス登録する
-            services.AddAsImplementedInterfaces(type, lifetime);
+            var types = assemblies
+                 .SelectMany((System.Reflection.Assembly asm) => asm.GetExportedTypes()) // 公開されている全ての型
+                 .Where((t) => !t.IsInterface            // インタフェースではない
+                               && !t.IsAbstract          // 抽象型ではない
+                               && conditions(t))         // 与えた条件に合致する
+                 .ToList();
 
-            // 自分自身の型に対してもサービス登録する
-            services.Add(new ServiceDescriptor(type, type, lifetime));
-            DebugOutput(type, type, lifetime);
-        } 
+            foreach (Type type in types)
+            {
+                // 対象のクラスが実装している全てのインタフェースに対してこの型をサービス登録する
+                services.AddAsImplementedInterfaces(type, lifetime);
 
-        return services;
-    }
+                // 自分自身の型に対してもサービス登録する
+                services.Add(new ServiceDescriptor(type, type, lifetime));
+                DebugOutput(type, type, lifetime);
+            }
 
-    public static IServiceCollection AddAssemblyTypes<TType>(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime)
-    {
-        Func<Type, bool> conditions = (t) => typeof(TType).IsAssignableFrom(t);
-        return services.AddAssemblyTypes(assemblies, lifetime, conditions);
-    }
-
-    public static IServiceCollection AddAssemblyTypes(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime, string classNameEndsWith)
-    {
-        Func<Type, bool> conditions = (t) => t.Name.EndsWith(classNameEndsWith);
-        return services.AddAssemblyTypes(assemblies, lifetime, conditions);
-    }
-
-    private static void AddAsImplementedInterfaces(this IServiceCollection services, Type type, ServiceLifetime lifetime)
-    {
-        foreach( Type t in type.GetInterfaces())
-        {
-            services.Add(new ServiceDescriptor(t, type, lifetime));
-            DebugOutput(type, type, lifetime);
+            return services;
         }
+
+        public static IServiceCollection AddAssemblyTypes<TType>(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime)
+        {
+            Func<Type, bool> conditions = (t) => typeof(TType).IsAssignableFrom(t);
+            return services.AddAssemblyTypes(assemblies, lifetime, conditions);
+        }
+
+        public static IServiceCollection AddAssemblyTypes(this IServiceCollection services, IEnumerable<Assembly> assemblies, ServiceLifetime lifetime, string classNameEndsWith)
+        {
+            Func<Type, bool> conditions = (t) => t.Name.EndsWith(classNameEndsWith);
+            return services.AddAssemblyTypes(assemblies, lifetime, conditions);
+        }
+
+        private static void AddAsImplementedInterfaces(this IServiceCollection services, Type type, ServiceLifetime lifetime)
+        {
+            foreach (Type t in type.GetInterfaces())
+            {
+                services.Add(new ServiceDescriptor(t, type, lifetime));
+                DebugOutput(type, type, lifetime);
+            }
+        }
+
+        private static void DebugOutput(Type itype, Type type, ServiceLifetime lifetime)
+            => Debug.WriteLine($"Add{lifetime}<{itype.Name}, {type.Name}>");
+
     }
-
-    private static void DebugOutput(Type itype, Type type, ServiceLifetime lifetime) 
-        => Debug.WriteLine($"Add{lifetime}<{itype.Name}, {type.Name}>");
-
 }
